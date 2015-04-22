@@ -53,6 +53,7 @@ from PIL import Image
 
 from despyastro import wcsutil
 from despyastro import tableio
+from drawDECam import drawDECam as draw # to use ellipses
 
 sout = sys.stdout
 
