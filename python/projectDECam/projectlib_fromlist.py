@@ -162,10 +162,10 @@ class project_DECam_fromlist:
         opts = ''
         # CHANGE: This only work if we use eups, might want more general solution
         try:
-            print "# Loading configuration via QATOOLKIT_DIR evironment variable"
-            opts = opts + ' -c  %s/etc/default.swarp' % os.environ['QATOOLKIT_DIR']
+            print "# Loading configuration via PROJECTDECAM_DIR evironment variable"
+            opts = opts + ' -c  %s/etc/default.swarp' % os.environ['PROJECTDECAM_DIR']
         except:
-            sys.exit("# ERROR: could not define files via QATOOLKIT_DIR evironment variable")
+            sys.exit("# ERROR: could not define files via PROJECTDECAM_DIR evironment variable")
 
         ##############################################################################
         # Tries to fix the background calculation around large bright objects/stars
@@ -244,10 +244,10 @@ class project_DECam_fromlist:
 
         # CHANGE: This only work if we use eups, might want more general solution
         try:
-            print "# Loading configuration via QATOOLKIT_DIR evironment variable"
-            opts = opts + " -c  %s/etc/default.stiff" % os.environ['QATOOLKIT_DIR']
+            print "# Loading configuration via PROJECTDECAM_DIR evironment variable"
+            opts = opts + " -c  %s/etc/default.stiff" % os.environ['PROJECTDECAM_DIR']
         except:
-            sys.exit("# ERROR: could not define files via QATOOLKIT_DIR evironment variable")
+            sys.exit("# ERROR: could not define files via PROJECTDECAM_DIR evironment variable")
             
         opts = opts + " -IMAGE_TYPE   TIFF"        # Output image format
         opts = opts + " -COMPRESSION_TYPE JPEG"     # Compression type
