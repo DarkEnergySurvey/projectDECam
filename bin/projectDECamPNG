@@ -3,8 +3,8 @@
 """
 This is the simple call to the project_DECam class inside
 projectlib.py to create full focal plane fits files and grayscale PNGs
-of DECam exposure images. This version uses a path to search for the
-'red' files in the cosmology cluster.
+of DECam exposure images. This version uses a filelist on input CCDs
+and catalogs.
 
 Felipe Menanteau, May 2014
 """
