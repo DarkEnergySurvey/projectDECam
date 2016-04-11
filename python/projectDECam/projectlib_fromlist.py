@@ -75,13 +75,18 @@ class project_DECam_fromlist:
         # Estimate the "scaled" weight-threshold due the new pixscale
         # assumed DECam 0.263 arcsec/pix as static value
         self.INPUT_PIXEL_SCALE = 0.263
-        self.weight_thresh = self.weight_thresh*(self.INPUT_PIXEL_SCALE/self.pixscale)**2
+
+        if self.weight_thresh:
+            self.weight_thresh = float(self.weight_thresh)*(self.INPUT_PIXEL_SCALE/self.pixscale)**2
 
         # Read in the imagalist and catlist (if present)
         self.read_filelists()
 
         # Now make sure that the output path exists
         self.outpath = os.path.split(self.basename)[0]
+        if self.outpath == '':
+            self.outpath = os.getcwd()
+
         print "# Will write files to: %s" % self.outpath
         if not os.path.exists(self.outpath):
             print "# Making %s" % self.outpath
@@ -93,6 +98,7 @@ class project_DECam_fromlist:
                             keep=self.keepfiles)
         # Create PNGs
         if not self.noPNG:
+            print "# Running PNG Creation"
             self.stiff_exposure()
             self.make_png_thumbnail()
         else:
@@ -100,6 +106,7 @@ class project_DECam_fromlist:
     
         # Draw detection
         if not self.noEll:
+            print "# Running Ell Creation"
             self.read_exposure_catalogs_files() # This one is diferent for SQL
             self.make_ell_thumbnail()
         else:
@@ -174,7 +181,9 @@ class project_DECam_fromlist:
         opts = opts + ' -BACK_FILTERSIZE 7'
         ##############################################################################
         opts = opts + ' -WEIGHT_TYPE MAP_WEIGHT'
-        opts = opts + ' -WEIGHT_THRESH %s' % self.weight_thresh
+        # Only if we want it
+        if self.weight_thresh:
+            opts = opts + ' -WEIGHT_THRESH %s' % self.weight_thresh
         opts = opts + ' -WEIGHT_IMAGE %s' % self.wgtnames
         opts = opts + ' -BLANK_BADPIXELS Y'
         opts = opts + ' -FSCALASTRO_TYPE VARIABLE'
@@ -318,7 +327,8 @@ class project_DECam_fromlist:
         pylab.axes([0,0,1,1], frameon=False)
         pylab.imshow(self.png_array,origin='lower',cmap='gray',interpolation='none')
         ax = pylab.gca()
-        ec = 'red'
+        ec_ima1 = 'red'
+        ec_ima2 = 'blue'
         pylab.axis('off')
 
         i = 0
@@ -335,12 +345,16 @@ class project_DECam_fromlist:
                 a_image = tbdata['A_IMAGE']*tbdata['KRON_RADIUS']
                 b_image = tbdata['B_IMAGE']*tbdata['KRON_RADIUS']
                 theta   = tbdata['THETA_IMAGE']
+                imaflag_iso = tbdata['IMAFLAGS_ISO']
+
             else:
                 ra      = numpy.append(ra,tbdata['ALPHA_J2000'])
                 dec     = numpy.append(dec,tbdata['DELTA_J2000'])
                 a_image = numpy.append(a_image,tbdata['A_IMAGE']*tbdata['KRON_RADIUS'])
                 b_image = numpy.append(b_image,tbdata['B_IMAGE']*tbdata['KRON_RADIUS'])
                 theta   = numpy.append(theta,tbdata['THETA_IMAGE'])
+                imaflag_iso = numpy.append(imaflag_iso,tbdata['IMAFLAGS_ISO'])
+
 
             hdulist.close()
             i = i+1
@@ -354,7 +368,12 @@ class project_DECam_fromlist:
         # Draw all at once -- faster
         t1 = time.time()
         print "# Drawing ellipses for %s objects" % len(x)
-        draw.PEllipse_multi((x,y),(a_image,b_image),resolution=60,angle=theta,facecolor='none',edgecolor=ec,linewidth=0.5)
+
+        # Drawing imaflags > 0 blue and the rest 'red'
+        idx1 = numpy.where(imaflag_iso == 0)
+        idx2 = numpy.where(imaflag_iso >  0)
+        draw.PEllipse_multi((x[idx1],y[idx1]),(a_image[idx1],b_image[idx1]),resolution=60,angle=theta,facecolor='none',edgecolor=ec_ima1,linewidth=0.5)
+        draw.PEllipse_multi((x[idx2],y[idx2]),(a_image[idx2],b_image[idx2]),resolution=60,angle=theta,facecolor='none',edgecolor=ec_ima2,linewidth=0.5)
         print "# Ellipses draw time: %s" % elapsed_time(t1)
 
         print "# Saving PNG file with ellipses"
@@ -650,7 +669,7 @@ def cmdline():
                         help="pixel-scale in arcsec/pix")
     parser.add_argument("--noSWarp", action="store_true",default=False,
                         help="No SWarp -- dry run")
-    parser.add_argument("--weight_thresh", type=float, action="store",default=1e-4,
+    parser.add_argument("--weight_thresh", action="store",default=None,
                         help="SWarps WEIGHT_THRESH value")
     parser.add_argument("--force", action="store_true", default=False,
                         help="Forces the re-creation of existing files")
@@ -668,10 +687,6 @@ def cmdline():
 
     
     args = parser.parse_args()
-
-    # cataloglist turns on Ell and off noPNG
-    if args.cataloglist:
-        args.noEll=False
 
     # noPNG turns off noEll
     if args.noPNG:
