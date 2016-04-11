@@ -3,7 +3,7 @@ from distutils.core import setup
 
 # The main call
 setup(name='projectDECam',
-      version ='0.2.0',
+      version ='0.1.1',
       license = "GPL",
       description = "Created full focal plane fits files and grayscale PNGs of DECam exposures",
       author = "Felipe Menanteau",
