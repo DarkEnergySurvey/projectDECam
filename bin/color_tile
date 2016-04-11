@@ -1,0 +1,639 @@
+#!/usr/bin/env python
+
+"""
+A tool to create color images for the DES coadded tiles using stiff and ImageMagic
+Author:
+ Felipe Menanteau, NCSA,
+ Initial version: Sept 2013.
+ -- Added WCS information to PNGs,
+    March, 2014 (required STIFF version 2.1.3 or higher)
+
+"""
+
+import os,sys
+import time
+import glob
+import shlex
+import multiprocessing
+import subprocess
+sout = sys.stdout
+
+# External modules that need to be declared in eups
+import pyfits
+import despydb.desdbi
+import PIL
+from PIL import Image
+from PIL import PngImagePlugin
+
+class technicolor:
+
+    """ Class to produce png/jpg color images for DES tiles using the DESAR DB using stiff as the backbone"""
+
+    def __init__(self,coadd_version='SVA1_COADD',
+                 tilename=None,
+                 outdir="color_tiles",
+                 MP=False,
+                 TNsize = 800,
+                 max_colorscale=0.995,
+                 min_colorscale=0.005,
+                 max_grayscale=0.950,
+                 force=False):
+
+        self.tilename      = tilename
+        self.coadd_version = coadd_version
+        self.outdir     = outdir
+        self.MP         = MP
+        self.max_colorscale = max_colorscale # colorscale percentage
+        self.max_grayscale  = max_grayscale  # grayscale percentage
+        self.force      = force      # forces the re-creation of files
+        self.TNsize     = TNsize
+        self.TNscale    = "%sx%s" % (TNsize,TNsize)
+
+        # Setup desar queries here for later
+        section = "db-desoper"
+        try:
+            desdmfile = os.environ["des_services"]
+        except KeyError:
+            desdmfile = None
+        self.dbh = despydb.desdbi.DesDbi(desdmfile,section)
+
+        # Get the tilenames for the version and run names
+        self.query_desar_tilenames()
+
+        # This might change in the future
+        self.path_tmp = "/tmp"
+
+        # Make the list of files
+        self.build_filelists_SQL()
+
+        # Funpack them all
+        self.funpack_tile()
+        
+        # Make sure that the output directory exists
+        if not os.path.exists(self.outdir):
+            os.mkdir(self.outdir)
+
+        # Now make sure that the output path exists
+        print "# Will store file in: %s" % self.outpath
+        if not os.path.exists(self.outpath):
+            print "# Making %s" % self.outpath
+            os.mkdir(self.outpath)
+
+        return
+
+    def query_desar_tilenames(self):
+
+        """
+        Finds all of the run names associated with a TILENAME from a give tag: such as 'SVA1_COADD'
+        """
+        
+        cur = self.dbh.cursor()
+
+        # Query to get them
+        # SELECT distinct run from runtag where tag='SVA1_COADD';
+        # Files are in
+        # /archive_data/Archive/OPS/coadd/20130904000011_DES0437-4414/coadd/>
+
+        query = "SELECT distinct tilename, run from coadd where run in (SELECT distinct run from runtag where tag='%s')" % self.coadd_version
+        print "# Will execute the SQL query:\n********\n** %s\n********" % query
+        cur.execute(query)
+
+        self.run_names = {}
+        for item in cur:
+            tilename = item[0]
+            self.run_names[tilename] = item[1]
+        return
+
+
+    def build_filelists_SQL(self):
+
+        """ Builds the file list to be used using DESAR/SQL queries """
+        
+        print "# Building the list of files to be used from DESAR/SQL queries"
+        cur = self.dbh.cursor()
+
+        #####################################################################
+        # PART 1 -- Get the archive root -- usually /archive_data/Archive/
+        #####################################################################
+        query = "select archive_root from archive_sites where location_name='desardata'"
+        print "# Getting the archive root name"
+        print "# Will execute the SQL query:\n********\n** %s\n********" % query
+        cur.execute(query)
+        self.archive_root = cur.fetchone()[0]
+
+        #####################################################################
+        # PART 2 --  Get the location of the filenames
+        #####################################################################
+        query = """select path, band from filepath_desar,location
+        where filepath_desar.id=location.id and location.run='%s' and location.filetype='coadd'""" % self.run_names[tilename]
+        cur.execute(query)
+
+        self.funames = {}
+        self.fznames = {}
+        for item in cur:
+            FILTER = item[1]
+            fzname = os.path.join(self.archive_root,item[0])
+            funame = os.path.join(self.path_tmp,os.path.basename(os.path.splitext(fzname)[0]))
+            self.fznames[FILTER] = fzname
+            self.funames[FILTER] = funame
+            print "# %s -- %s - %s" % (FILTER,fzname,funame)
+
+        # Pass up the filters for the tile
+        self.filters = self.fznames.keys()
+        self.filters.sort()
+
+        # the OUTPATH
+        self.outpath = os.path.join(self.outdir,self.tilename)
+
+        # The BASENAME for output files
+        self.base_outname = os.path.join(self.outpath,self.tilename)
+        return
+
+
+    def funpack_tile(self):
+
+        """ Funpack files if f-packed"""
+
+        self.fpack_cmd = []
+        t0 = time.time()
+        print "# funziping files for tile: %s" % self.tilename
+        for FILTER in self.filters:
+            # funpack only the science[1] Image
+            cmd = "funpack -E 1 -O %s %s" % (self.funames[FILTER],self.fznames[FILTER])
+            # MP-mode
+            if self.MP:
+                self.fpack_cmd.append(shlex.split(cmd))
+            # Non-MP mode
+            else:
+                sout.write("\rfunpacking %s " % self.funames[FILTER]);sout.flush()
+                os.system(cmd)            
+        # Clean terminal
+        sout.write("#\n")
+
+        if self.MP:
+            count = multiprocessing.cpu_count()
+            print "# Will Use %s threads for FUNPACK" % count
+            pool = multiprocessing.Pool(processes=count)
+            pool.map(work, self.fpack_cmd)
+
+        # Time in fpack
+        print "# fpack time: %s" % elapsed_time(t0)
+        return
+
+    def tif2png_tile(self):
+
+        """
+        Transform tif --> png using PIL + adding wcs information at
+        the same time
+        """
+
+        wcskeys = ['CRVAL1',
+                   'CRVAL2',
+                   'CRPIX1',
+                   'CRPIX2',
+                   'CD1_1',
+                   'CD1_2',
+                   'CD2_1',
+                   'CD2_2']
+
+        print "# Adding WCS information to RGB %s" % self.RGB_pngfile
+        header = pyfits.getheader(self.RGB_fits)
+        meta = PngImagePlugin.PngInfo()
+        for key in wcskeys:
+            meta.add_text(key,str(header[key]))
+        meta.add_text("Copyright", "DES Collaboration")
+        im = Image.open(self.RGB_tiffile)
+        im.save(self.RGB_pngfile, "png", pnginfo=meta)
+
+        # --------------------------
+        # Loop over grayscale pngs
+        for filter in self.filters:
+            self.pngfile = "%s_%s.png" % (self.base_outname,filter)
+            self.tiffile = "%s_%s.tif" % (self.base_outname,filter)
+
+            t0 = time.time()
+            # Avoid duplication unless ne
+            if os.path.exists(self.pngfile) and not self.force:
+                print "# Gray %s PNG file already exists" % filter
+                print "# Skipping Gray/PNG creation"
+                continue
+
+            # Open the tiff file with PIL
+            print "# Adding WCS information to %s" % self.pngfile
+
+            # Read in the header from the parent fits file
+            header = pyfits.getheader(self.funames[filter])
+            for key in wcskeys:
+                meta.add_text(key,str(header[key]))
+            meta.add_text("Copyright", "DES Collaboration")
+
+            im = Image.open(self.tiffile)
+            meta = PngImagePlugin.PngInfo()
+            im.save(self.pngfile, "png", pnginfo=meta)
+        
+
+    # Make the grayscale tiff color images for each one
+    def stiff_tile(self):
+
+        """ Create and execute the stiff call"""
+        
+        # Check that we have a stiff loaded
+        if not inpath('stiff',verb='yes'):
+            sys.exit("Exiting -- no stiff found\n\t try: setup stiff\n")
+            
+        # Explicit STIFF Call!!
+        opts = ''
+        opts = opts + " -IMAGE_TYPE   TIFF"        # Output image format
+        opts = opts + " -BITS_PER_CHANNEL 8"       # Bits per channel
+        opts = opts + " -COMPRESSION_TYPE JPEG"    # Compression type, PIL only gets JPEG!
+        opts = opts + " -BINNING      1"           # Binning factor for the data
+        opts = opts + " -GAMMA        2.2"         # Display gamma
+        opts = opts + " -GAMMA_FAC    1.0"         # Luminance gamma correction factor
+        opts = opts + " -COLOUR_SAT   1.0"         # Colour saturation (0.0 = B&W)
+        opts = opts + " -NEGATIVE     N"           # Make negative of the image
+        opts = opts + " -SKY_TYPE     AUTO"        # Sky-level: "AUTO" or "MANUAL"
+        opts = opts + " -SKY_LEVEL    0.0"         # Background level for each image
+        opts = opts + " -MIN_TYPE     GREYLEVEL"   # Min-level: "QUANTILE", "MANUAL" or "GREYLEVEL"
+        opts = opts + " -MIN_LEVEL    0.005"       # Minimum value or quantile
+        opts = opts + " -MAX_TYPE     QUANTILE"    # Max-level: "QUANTILE" or "MANUAL"
+        opts = opts + " -MAX_LEVEL    %s" % self.max_grayscale # Maximum value or quantile 
+        opts = opts + " -SATUR_LEVEL  40000.0"     # FITS data saturation level(s)
+        opts = opts + " -COPY_HEADER  Y"           # Keep WCS information      
+        opts = opts + " -COPYRIGHT    DES" 
+        opts = opts + " -DESCRIPTION  DECam"
+        
+        # Loop for each filter
+        stiff_cmd = []
+        for filter in self.filters:
+            
+            self.pngfile = "%s_%s.png" % (self.base_outname,filter)
+            self.tiffile = "%s_%s.tif" % (self.base_outname,filter)
+            
+            t0 = time.time()
+            # Avoid duplication unless ne
+            if os.path.exists(self.pngfile) and not self.force:
+                print "# Gray %s PNG file already exists" % filter
+                print "# Skipping Gray/PNG creation"
+                continue
+
+            #################################
+            # PART 1 -- STIFF
+            #################################
+            cmd1 = "stiff %s -OUTFILE_NAME %s %s" % (self.funames[filter],
+                                                     self.tiffile,
+                                                     opts)
+            # MP-mode
+            if self.MP:
+                stiff_cmd.append(shlex.split(cmd1))
+            # Non-MP mode
+            else:
+                os.system(cmd1)            
+                print "# stiff time %s -- %s" % (elapsed_time(t0),filter)
+
+        ###############################################
+        # Get the command-line call for the RGB image
+        ###############################################
+        if self.build_RGB_stiff_call():
+            if self.MP:
+                stiff_cmd.append(shlex.split(self.RGB_stiff))
+            else:
+                os.system(self.RGB_stiff)
+        else:
+            print "# Skipping RGB/PNG creation"
+
+        ####################################
+        # MP calls Outside the filter loop
+        ####################################
+        if self.MP:
+            # we STIFF in MP mode
+            t0 = time.time()
+            pool1 = None
+            count = multiprocessing.cpu_count()
+            print "# Will Use %s threads for STIFF" % count
+            pool1 = multiprocessing.Pool(processes=count)
+            pool1.map(work, stiff_cmd)
+            print "# MP  stiff time %s" % elapsed_time(t0)
+                    
+        # Tell time
+        print "# stiff time: %s" % elapsed_time(t0)
+        return
+
+
+    # Build stiff RGB command call for the color tile
+    def build_RGB_stiff_call(self):
+
+        """ Construct the the RGB/color stiff call """
+
+        # Explicit STIFF Call!!
+        opts = ''
+        opts = opts + " -IMAGE_TYPE   TIFF"        # Output image format
+        opts = opts + " -BINNING      1"           # Binning factor for the data
+        opts = opts + " -GAMMA        2.2"         # Display gamma
+        opts = opts + " -GAMMA_FAC    1.0"         # Luminance gamma correction factor
+        opts = opts + " -COLOUR_SAT   1.0"         # Colour saturation (0.0 = B&W)
+        opts = opts + " -NEGATIVE     N"           # Make negative of the image
+        opts = opts + " -SKY_TYPE     AUTO"        # Sky-level: "AUTO" or "MANUAL"
+        opts = opts + " -SKY_LEVEL    0.0"         # Background level for each image
+        opts = opts + " -MIN_TYPE     GREYLEVEL"   # Min-level: "QUANTILE", "MANUAL" or "GREYLEVEL"
+        opts = opts + " -MIN_LEVEL    0.005"       # Minimum value or quantile
+        opts = opts + " -MAX_TYPE     QUANTILE"    # Max-level: "QUANTILE" or "MANUAL"
+        opts = opts + " -MAX_LEVEL    %s" % self.max_colorscale # Maximum value or quantile 
+        opts = opts + " -SATUR_LEVEL  40000.0"     # FITS data saturation level(s)
+
+        self.RGB_pngfile = "%s_RGB.png" % self.base_outname
+        self.RGB_tiffile = "%s_RGB.tif" % self.base_outname
+            
+        # Avoid duplication unless required
+        if os.path.exists(self.RGB_pngfile) and not self.force:
+            print "# RGB/PNG file already exists"
+            print "# Skipping RGB/PNG creation"
+            return False
+
+        # Make sure we have g,r and i files for color 
+        fs = self.filters
+        if 'g' in fs and 'r' in fs and 'i' in fs:
+            print "# found g,r,i for color image"
+            infiles = "%s %s %s" % (self.funames['i'],self.funames['r'],self.funames['g'])
+            self.RGB_fits = self.funames['r'] # use as wcs base
+        elif 'r' in fs and 'i' in fs and 'z' in fs:
+            print "# found r,i,z for color image"
+            infiles = "%s %s %s" % (self.funames['z'],self.funames['i'],self.funames['r'])
+            self.RGB_fits = self.funames['i'] # use as wcs base
+        else:
+            print "# Not enough filters for color image"
+            return False
+        
+        # The STIFF call
+        self.RGB_stiff = "stiff %s -OUTFILE_NAME %s %s" % (infiles,self.RGB_tiffile,opts)
+        return True
+
+
+    def make_png_thumbnails(self):
+
+        """ Make the thumbnails for the webpages """
+
+        # Check that we have ImageMagic convert
+        if not inpath('convert',verb='yes'):
+            sys.exit("Exiting -- no convert found") 
+
+        t0 = time.time()
+        TN_cmd = []
+        for filter in self.filters:
+            self.pngfile = "%s_%s.png" % (self.base_outname,filter)
+            self.TN_png  = "%s_%s_TN.png" % (self.base_outname,filter)
+            cmd = 'convert -scale %s %s %s' % (self.TNscale,self.pngfile,self.TN_png)
+            if os.path.exists(self.TN_png) and not self.force:
+                print "# File exists -- Skipping creation of %s" % self.TN_png
+                continue
+                
+            print "# Creating TN %s" % self.TN_png
+            # MP-mode
+            if self.MP:
+                TN_cmd.append(shlex.split(cmd))
+            # Non-MP mode
+            else:
+                os.system(cmd)            
+                
+        # Now the RGB image
+        self.TN_RGB  = "%s_RGB_TN.png" % (self.base_outname)
+        cmd = 'convert -scale %s %s %s' % (self.TNscale,self.RGB_pngfile,self.TN_RGB)
+        print "# Creating TN %s" % self.TN_RGB
+        # MP-mode
+        if self.MP:
+            TN_cmd.append(shlex.split(cmd))
+            count = multiprocessing.cpu_count()
+            print "# Will Use %s threads for TN Creation" % count
+            pool = multiprocessing.Pool(processes=count)
+            pool.map(work, TN_cmd)
+        # Non-MP mode
+        else:
+            os.system(cmd)            
+
+        print "# stiff time %s -- %s" % (elapsed_time(t0),filter)
+        return
+
+
+    def add_metadataPNG(self):
+
+        """ Add WCS metadata to PNG files """
+
+        wcskeys = ['CRVAL1',
+                   'CRVAL2',
+                   'CRPIX1',
+                   'CRPIX2',
+                   'CD1_1',
+                   'CD1_2',
+                   'CD2_1',
+                   'CD2_2']
+        
+        print "# Adding WCS information to RGB %s" % self.RGB_pngfile
+
+        # Figure out the best filter to use, i-band, then r-band
+        try:
+            header = pyfits.getheader(self.funames['i'])
+        except:
+            header = pyfits.getheader(self.funames['r'])
+            
+        meta = PngImagePlugin.PngInfo()
+        for key in wcskeys:
+            meta.add_text(key,str(header[key]))
+        meta.add_text("Copyright", "DES Collaboration")
+        im = Image.open(self.RGB_pngfile)
+        im.save(self.RGB_pngfile, "png", pnginfo=meta)
+
+        # Do the same for every filter
+        for filter in self.filters:
+            self.pngfile = "%s_%s.png" % (self.base_outname,filter)
+            print "# Adding WCS information to %s" % self.pngfile
+
+            # Read in the header from the parent fits file
+            header = pyfits.getheader(self.funames[filter])
+            for key in wcskeys:
+                meta.add_text(key,str(header[key]))
+            meta.add_text("Copyright", "DES Collaboration")
+
+            im = Image.open(self.pngfile)
+            meta = PngImagePlugin.PngInfo()
+            im.save(self.pngfile, "png", pnginfo=meta)
+        
+    
+    def clean_fits(self):
+
+        """ Clean up (remove) temporary fits files """
+
+        t0 = time.time()
+        clean_cmd = []
+        print "# Cleaning FITS"
+        for filter in self.filters:
+
+            # Check if file exist
+            if not os.path.exists(self.funames[filter]):
+                continue
+            cmd = "rm -v %s" % self.funames[filter]
+            # MP-mode
+            if self.MP:
+                clean_cmd.append(shlex.split(cmd))
+            # Non-MP mode
+            else:
+                os.system(cmd)            
+            
+        if self.MP:
+            count = multiprocessing.cpu_count()
+            print "# Will Use %s threads for RM" % count
+            pool = multiprocessing.Pool(processes=count)
+            pool.map(work, clean_cmd)
+
+        # Time in rm
+        print "# rm time: %s" % elapsed_time(t0)
+        return
+
+    def clean_tiff(self):
+
+        """ Clean up (remove) the tiff files, we only keep the PNGs"""
+
+        t0 = time.time()
+        clean_cmd = []
+        print "# Cleaning TIFF"
+        for filter in self.filters:
+            # Check if file exist
+            if not os.path.exists("%s_%s.tif" % (self.base_outname,filter)):
+                continue
+
+            cmd = "rm -v %s_%s.tif" % (self.base_outname,filter)
+            # MP-mode
+            if self.MP:
+                clean_cmd.append(shlex.split(cmd))
+            # Non-MP mode
+            else:
+                os.system(cmd)            
+                
+        if self.MP:
+            count = multiprocessing.cpu_count()
+            print "# Will Use %s threads for RM" % count
+            pool = multiprocessing.Pool(processes=count)
+            pool.map(work, clean_cmd)
+
+        if os.path.exists(self.RGB_tiffile):
+            os.system("rm -v %s" % self.RGB_tiffile)
+
+        # Time in rm
+        print "# rm time: %s" % elapsed_time(t0)
+        return
+
+
+def elapsed_time(t1,verb=False):
+    """ Format the elapsed time """
+    import time
+    t2    = time.time()
+    stime = "%dm %2.2fs" % ( int( (t2-t1)/60.), (t2-t1) - 60*int((t2-t1)/60.))
+    if verb:
+        print >>sys.stderr,"Elapsed time: %s" % stime
+    return stime
+        
+def work(cmd):
+    """ Dummy function to call in multiprocess """
+    return subprocess.call(cmd, shell=False)
+
+# Check if executable is in path of user
+def inpath(program,verb=None):
+    """ Checks if program is in the user's path """
+    import os.path
+    for path in os.environ['PATH'].split(':'):
+        if os.path.exists( os.path.join(path,program) ):
+            if verb: print "# program: %s found in: %s" % (program , os.path.join(path,program))
+            return 1
+    if verb: print "# program: %s NOT found in user's path " % program
+    return 0
+
+def cmdline():
+
+    """ Handle the command-line options for the program """
+    
+    from optparse import OptionParser
+
+    # Read in the command line options
+    USAGE = "\n"
+    USAGE = USAGE + "\t %prog <tilename> [COADD-VERSION]\n" 
+    USAGE = USAGE + "\t i.e.: \n"
+    USAGE = USAGE + "\t %prog DES0056-4831 [SVA1_COADD] \n"
+
+    # color_tile.py DES0056-4831
+
+    parser = OptionParser(usage=USAGE)
+
+    parser.add_option("--outdir",
+                      dest="outdir", default='./color_tiles',
+                      help="Output Directory to put files in")
+
+    parser.add_option("--MP",
+                      action="store_true", dest="MP", default=1,
+                      help="Use multiprocess")
+
+    parser.add_option("--noMP",
+                      action="store_true", dest="noMP", default=0,
+                      help="Don't use multiprocess")
+
+    parser.add_option("--TNsize",
+                      type='int',dest="TNsize", default=800,
+                      help="Size of thumbnail [pixels]")
+
+    parser.add_option("--grayscale",
+                      type='float',dest="grayscale", default=0.95,
+                      help="grayscale for png creation [i.e. 0.950]")
+
+    parser.add_option("--colorscale",
+                      type='float',dest="colorscale", default=0.995,
+                      help="colorscale for png creation [i.e. 0.995]")
+
+    parser.add_option("--force",
+                      action="store_true", dest="force", default=0,
+                      help="Forces the re-creation of existing files")
+
+    (options, args) = parser.parse_args()
+
+    if len(args) < 1:
+        parser.error("\n\tERROR:incorrect number of arguments")        
+
+    if options.noMP:
+        options.MP = False
+        
+    return options,args
+
+
+######################
+# Call the procedure
+######################
+if __name__ == '__main__':
+
+    t0 = time.time()
+    # The start time
+    tstart   = time.time()
+
+    # Get the command line options
+    opt,arg = cmdline()
+    tilename = arg[0]
+    try:
+        coadd_version = arg[1] 
+    except:
+        coadd_version = 'SVA1_COADD'
+
+    # initialize the class and collect files
+    p = technicolor(coadd_version=coadd_version,
+                    tilename=tilename,
+                    outdir=opt.outdir,
+                    MP=opt.MP,
+                    TNsize=opt.TNsize,
+                    max_grayscale=opt.grayscale,
+                    max_colorscale=opt.colorscale,
+                    force=opt.force)
+
+
+    # Make the grayscale and color-pngs
+    p.stiff_tile()
+    p.tif2png_tile()
+    p.make_png_thumbnails()
+
+    # Clean up temporary files
+    p.clean_fits()
+    p.clean_tiff()
+    print "# Grand total time: %s" % elapsed_time(t0)
