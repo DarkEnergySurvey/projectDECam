@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 """
-A tool to create color images for the DES coadded tiles using stiff and ImageMagic
+A tool to create color images for the DES coadded tiles using
+stiff and ImageMagic
 Author:
  Felipe Menanteau, NCSA,
  Initial version: Sept 2013.
@@ -10,13 +11,13 @@ Author:
 
 """
 
-import os,sys
+import os
+import sys
 import time
 import glob
 import shlex
 import multiprocessing
 import subprocess
-sout = sys.stdout
 
 # External modules that need to be declared in eups
 import pyfits
@@ -25,29 +26,36 @@ import PIL
 from PIL import Image
 from PIL import PngImagePlugin
 
+sout = sys.stdout
+
+
 class technicolor:
 
-    """ Class to produce png/jpg color images for DES tiles using the DESAR DB using stiff as the backbone"""
+    """
+    Class to produce png/jpg color images for DES tiles using
+    the DESAR DB using stiff as the backbone
+    """
 
-    def __init__(self,coadd_version='SVA1_COADD',
+    def __init__(self,
+                 coadd_version='SVA1_COADD',
                  tilename=None,
                  outdir="color_tiles",
                  MP=False,
-                 TNsize = 800,
+                 TNsize=800,
                  max_colorscale=0.995,
                  min_colorscale=0.005,
                  max_grayscale=0.950,
                  force=False):
 
-        self.tilename      = tilename
+        self.tilename = tilename
         self.coadd_version = coadd_version
-        self.outdir     = outdir
-        self.MP         = MP
-        self.max_colorscale = max_colorscale # colorscale percentage
-        self.max_grayscale  = max_grayscale  # grayscale percentage
-        self.force      = force      # forces the re-creation of files
-        self.TNsize     = TNsize
-        self.TNscale    = "%sx%s" % (TNsize,TNsize)
+        self.outdir = outdir
+        self.MP = MP
+        self.max_colorscale = max_colorscale  # colorscale percentage
+        self.max_grayscale = max_grayscale  # grayscale percentage
+        self.force = force  # forces the re-creation of files
+        self.TNsize = TNsize
+        self.TNscale = "%sx%s" % (TNsize, TNsize)
 
         # Setup desar queries here for later
         section = "db-desoper"
@@ -55,7 +63,7 @@ class technicolor:
             desdmfile = os.environ["des_services"]
         except KeyError:
             desdmfile = None
-        self.dbh = despydb.desdbi.DesDbi(desdmfile,section)
+        self.dbh = despydb.desdbi.DesDbi(desdmfile, section)
 
         # Get the tilenames for the version and run names
         self.query_desar_tilenames()
@@ -68,7 +76,7 @@ class technicolor:
 
         # Funpack them all
         self.funpack_tile()
-        
+
         # Make sure that the output directory exists
         if not os.path.exists(self.outdir):
             os.mkdir(self.outdir)
@@ -84,9 +92,10 @@ class technicolor:
     def query_desar_tilenames(self):
 
         """
-        Finds all of the run names associated with a TILENAME from a give tag: such as 'SVA1_COADD'
+        Finds all of the run names associated with a TILENAME
+        from a give tag: such as 'SVA1_COADD'
         """
-        
+
         cur = self.dbh.cursor()
 
         # Query to get them
@@ -108,7 +117,7 @@ class technicolor:
     def build_filelists_SQL(self):
 
         """ Builds the file list to be used using DESAR/SQL queries """
-        
+
         print "# Building the list of files to be used from DESAR/SQL queries"
         cur = self.dbh.cursor()
 
@@ -166,7 +175,7 @@ class technicolor:
             # Non-MP mode
             else:
                 sout.write("\rfunpacking %s " % self.funames[FILTER]);sout.flush()
-                os.system(cmd)            
+                os.system(cmd)
         # Clean terminal
         sout.write("#\n")
 
@@ -230,17 +239,17 @@ class technicolor:
             im = Image.open(self.tiffile)
             meta = PngImagePlugin.PngInfo()
             im.save(self.pngfile, "png", pnginfo=meta)
-        
+
 
     # Make the grayscale tiff color images for each one
     def stiff_tile(self):
 
         """ Create and execute the stiff call"""
-        
+
         # Check that we have a stiff loaded
         if not inpath('stiff',verb='yes'):
             sys.exit("Exiting -- no stiff found\n\t try: setup stiff\n")
-            
+
         # Explicit STIFF Call!!
         opts = ''
         opts = opts + " -IMAGE_TYPE   TIFF"        # Output image format
@@ -256,19 +265,19 @@ class technicolor:
         opts = opts + " -MIN_TYPE     GREYLEVEL"   # Min-level: "QUANTILE", "MANUAL" or "GREYLEVEL"
         opts = opts + " -MIN_LEVEL    0.005"       # Minimum value or quantile
         opts = opts + " -MAX_TYPE     QUANTILE"    # Max-level: "QUANTILE" or "MANUAL"
-        opts = opts + " -MAX_LEVEL    %s" % self.max_grayscale # Maximum value or quantile 
+        opts = opts + " -MAX_LEVEL    %s" % self.max_grayscale # Maximum value or quantile
         opts = opts + " -SATUR_LEVEL  40000.0"     # FITS data saturation level(s)
-        opts = opts + " -COPY_HEADER  Y"           # Keep WCS information      
-        opts = opts + " -COPYRIGHT    DES" 
+        opts = opts + " -COPY_HEADER  Y"           # Keep WCS information
+        opts = opts + " -COPYRIGHT    DES"
         opts = opts + " -DESCRIPTION  DECam"
-        
+
         # Loop for each filter
         stiff_cmd = []
         for filter in self.filters:
-            
+
             self.pngfile = "%s_%s.png" % (self.base_outname,filter)
             self.tiffile = "%s_%s.tif" % (self.base_outname,filter)
-            
+
             t0 = time.time()
             # Avoid duplication unless ne
             if os.path.exists(self.pngfile) and not self.force:
@@ -287,7 +296,7 @@ class technicolor:
                 stiff_cmd.append(shlex.split(cmd1))
             # Non-MP mode
             else:
-                os.system(cmd1)            
+                os.system(cmd1)
                 print "# stiff time %s -- %s" % (elapsed_time(t0),filter)
 
         ###############################################
@@ -313,7 +322,7 @@ class technicolor:
             pool1 = multiprocessing.Pool(processes=count)
             pool1.map(work, stiff_cmd)
             print "# MP  stiff time %s" % elapsed_time(t0)
-                    
+
         # Tell time
         print "# stiff time: %s" % elapsed_time(t0)
         return
@@ -337,19 +346,19 @@ class technicolor:
         opts = opts + " -MIN_TYPE     GREYLEVEL"   # Min-level: "QUANTILE", "MANUAL" or "GREYLEVEL"
         opts = opts + " -MIN_LEVEL    0.005"       # Minimum value or quantile
         opts = opts + " -MAX_TYPE     QUANTILE"    # Max-level: "QUANTILE" or "MANUAL"
-        opts = opts + " -MAX_LEVEL    %s" % self.max_colorscale # Maximum value or quantile 
+        opts = opts + " -MAX_LEVEL    %s" % self.max_colorscale # Maximum value or quantile
         opts = opts + " -SATUR_LEVEL  40000.0"     # FITS data saturation level(s)
 
         self.RGB_pngfile = "%s_RGB.png" % self.base_outname
         self.RGB_tiffile = "%s_RGB.tif" % self.base_outname
-            
+
         # Avoid duplication unless required
         if os.path.exists(self.RGB_pngfile) and not self.force:
             print "# RGB/PNG file already exists"
             print "# Skipping RGB/PNG creation"
             return False
 
-        # Make sure we have g,r and i files for color 
+        # Make sure we have g,r and i files for color
         fs = self.filters
         if 'g' in fs and 'r' in fs and 'i' in fs:
             print "# found g,r,i for color image"
@@ -362,7 +371,7 @@ class technicolor:
         else:
             print "# Not enough filters for color image"
             return False
-        
+
         # The STIFF call
         self.RGB_stiff = "stiff %s -OUTFILE_NAME %s %s" % (infiles,self.RGB_tiffile,opts)
         return True
@@ -374,7 +383,7 @@ class technicolor:
 
         # Check that we have ImageMagic convert
         if not inpath('convert',verb='yes'):
-            sys.exit("Exiting -- no convert found") 
+            sys.exit("Exiting -- no convert found")
 
         t0 = time.time()
         TN_cmd = []
@@ -385,15 +394,15 @@ class technicolor:
             if os.path.exists(self.TN_png) and not self.force:
                 print "# File exists -- Skipping creation of %s" % self.TN_png
                 continue
-                
+
             print "# Creating TN %s" % self.TN_png
             # MP-mode
             if self.MP:
                 TN_cmd.append(shlex.split(cmd))
             # Non-MP mode
             else:
-                os.system(cmd)            
-                
+                os.system(cmd)
+
         # Now the RGB image
         self.TN_RGB  = "%s_RGB_TN.png" % (self.base_outname)
         cmd = 'convert -scale %s %s %s' % (self.TNscale,self.RGB_pngfile,self.TN_RGB)
@@ -407,7 +416,7 @@ class technicolor:
             pool.map(work, TN_cmd)
         # Non-MP mode
         else:
-            os.system(cmd)            
+            os.system(cmd)
 
         print "# stiff time %s -- %s" % (elapsed_time(t0),filter)
         return
@@ -425,7 +434,7 @@ class technicolor:
                    'CD1_2',
                    'CD2_1',
                    'CD2_2']
-        
+
         print "# Adding WCS information to RGB %s" % self.RGB_pngfile
 
         # Figure out the best filter to use, i-band, then r-band
@@ -433,7 +442,7 @@ class technicolor:
             header = pyfits.getheader(self.funames['i'])
         except:
             header = pyfits.getheader(self.funames['r'])
-            
+
         meta = PngImagePlugin.PngInfo()
         for key in wcskeys:
             meta.add_text(key,str(header[key]))
@@ -455,8 +464,8 @@ class technicolor:
             im = Image.open(self.pngfile)
             meta = PngImagePlugin.PngInfo()
             im.save(self.pngfile, "png", pnginfo=meta)
-        
-    
+
+
     def clean_fits(self):
 
         """ Clean up (remove) temporary fits files """
@@ -475,8 +484,8 @@ class technicolor:
                 clean_cmd.append(shlex.split(cmd))
             # Non-MP mode
             else:
-                os.system(cmd)            
-            
+                os.system(cmd)
+
         if self.MP:
             count = multiprocessing.cpu_count()
             print "# Will Use %s threads for RM" % count
@@ -505,8 +514,8 @@ class technicolor:
                 clean_cmd.append(shlex.split(cmd))
             # Non-MP mode
             else:
-                os.system(cmd)            
-                
+                os.system(cmd)
+
         if self.MP:
             count = multiprocessing.cpu_count()
             print "# Will Use %s threads for RM" % count
@@ -529,7 +538,7 @@ def elapsed_time(t1,verb=False):
     if verb:
         print >>sys.stderr,"Elapsed time: %s" % stime
     return stime
-        
+
 def work(cmd):
     """ Dummy function to call in multiprocess """
     return subprocess.call(cmd, shell=False)
@@ -548,12 +557,12 @@ def inpath(program,verb=None):
 def cmdline():
 
     """ Handle the command-line options for the program """
-    
+
     from optparse import OptionParser
 
     # Read in the command line options
     USAGE = "\n"
-    USAGE = USAGE + "\t %prog <tilename> [COADD-VERSION]\n" 
+    USAGE = USAGE + "\t %prog <tilename> [COADD-VERSION]\n"
     USAGE = USAGE + "\t i.e.: \n"
     USAGE = USAGE + "\t %prog DES0056-4831 [SVA1_COADD] \n"
 
@@ -592,11 +601,11 @@ def cmdline():
     (options, args) = parser.parse_args()
 
     if len(args) < 1:
-        parser.error("\n\tERROR:incorrect number of arguments")        
+        parser.error("\n\tERROR:incorrect number of arguments")
 
     if options.noMP:
         options.MP = False
-        
+
     return options,args
 
 
@@ -613,7 +622,7 @@ if __name__ == '__main__':
     opt,arg = cmdline()
     tilename = arg[0]
     try:
-        coadd_version = arg[1] 
+        coadd_version = arg[1]
     except:
         coadd_version = 'SVA1_COADD'
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """
 This is the simple call to the project_DECam class inside
@@ -10,16 +10,14 @@ Felipe Menanteau, May 2014
 """
 
 import time
-from projectDECam import projectlib_fromlist  as proj
+from projectDECam import projectlib_fromlist as proj
 
 # The start time
 t0 = time.time()
 
 # Get the command line options
-args    = proj.cmdline()
+args = proj.cmdline()
 # Into a dictionary
 kwargs = vars(args)
 proj.project_DECam_fromlist(**kwargs)
-print "# Total time: %s" % proj.elapsed_time(t0)
-
-
+print(f"# Total time: {proj.elapsed_time(t0)}")

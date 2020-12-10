@@ -1,18 +1,19 @@
-# despyastro loads: python, numpy, matplotlib and pyfits
-setupRequired(despyastro 0.3.5+0) 
-
-# DrawDEcam to draw ellipses
-setupRequired(drawDECam 0.1.0+5)
 
 # Pyfits
-setupRequired(pyfits 3.3+2)
+setupRequired(pyfits 3.4+0)
+
+# despyastro loads: python, numpy, matplotlib and pyfits
+setupRequired(despyastro 3.0.1+1)
+
+# DrawDEcam to draw ellipses
+setupRequired(drawDECam 3.0.0+0)
 
 # pil > 1.1.7+9 are compatible with libjpeg 8d+0 for tiff and stiff
-setupRequired(pil 1.1.7+13)    
+setupRequired(pillow 8.0.1+2)
 
-# Bertin's code
-setupRequired(stiff 2.1.3+1)
-setupRequired(swarp 2.40.0+1)
+# Bertin's software
+setupRequired(stiff 2.7.0+2)
+setupRequired(swarp 2.40.1+0)
 
 envAppend(PATH, ${PRODUCT_DIR}/bin)
 envAppend(PYTHONPATH, ${PRODUCT_DIR}/python/)
