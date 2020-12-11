@@ -6,4 +6,4 @@ version = __version__
  Scripts for projecting DECam exposures
 """
 
-import projectlib_fromlist
+from . import projectlib_fromlist
