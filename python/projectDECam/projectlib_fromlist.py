@@ -42,7 +42,7 @@ import time
 import math
 
 # Python external packages
-import pyfits
+import fitsio
 import numpy
 # ------------------------------------------
 # trick to avoid X11 crash when no display
@@ -340,8 +340,7 @@ class project_DECam_fromlist:
 
         for catfile in self.catlist:
             print(f"# Reading {catfile}")
-            hdulist = pyfits.open(catfile)
-            tbdata = hdulist[2].data
+            tbdata = fitsio.read(catfile, ext=2)
             # Store the Relevant information to draw ellipse
             if i == 0:
                 ra = tbdata['ALPHA_J2000']
@@ -359,12 +358,11 @@ class project_DECam_fromlist:
                 theta = numpy.append(theta, tbdata['THETA_IMAGE'])
                 imaflag_iso = numpy.append(imaflag_iso, tbdata['IMAFLAGS_ISO'])
 
-            hdulist.close()
             i = i+1
 
         print(f"# Read {i} SEx catalogs in time: {elapsed_time(t0)}")
         # Now let's put the positions on the projected image
-        hdr = pyfits.getheader(self.swarp_outname)
+        hdr = fitsio.read_header(self.swarp_outname)
         wcs = wcsutil.WCS(hdr)
         x, y = wcs.sky2image(ra, dec)
 
@@ -447,7 +445,7 @@ class project_DECam_fromlist:
         ra0 = []
         dec0 = []
         for filename in self.imgfiles:
-            hdr = pyfits.getheader(filename)
+            hdr = fitsio.read_header(filename)
             wcs = wcsutil.WCS(hdr)
             nx = hdr['NAXIS1']
             ny = hdr['NAXIS2']

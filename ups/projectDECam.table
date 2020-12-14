@@ -1,6 +1,6 @@
 
 # Pyfits
-setupRequired(pyfits 3.4+0)
+setupRequired(fitsio 1.1.2+0)
 
 # despyastro loads: python, numpy, matplotlib and pyfits
 setupRequired(despyastro 3.0.1+1)
